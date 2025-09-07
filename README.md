@@ -1,2 +1,2 @@
 # kewnix_private
-This is private space
+テストは、pico2ディレクトリに移動し、　pytest tests　で実行する
