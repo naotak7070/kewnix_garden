@@ -1,11 +1,46 @@
 from machine import I2C, Pin
-from ssd1306 import SSD1306_I2C
+
+try:
+    from ssd1306 import SSD1306_I2C
+except ImportError:
+    SSD1306_I2C = None
+
+class MockSSD1306:
+    """OLEDがない時に、あるフリをするダミークラス"""
+    def __init__(self, width, height):
+        self.width = width
+        self.height = height
+        print(f"[MockDisplay] Initialized ({width}x{height})")
+
+    def fill(self, col):
+        pass
+
+    def text(self, string, x, y, col=1):
+        # 画面への出力をコンソールログで代用
+        print(f"[MockDisp] {string}")
+
+    def show(self):
+        print("-" * 20)
+
 
 class DisplayManager:
-    def __init__(self, width=128, height=64, scl_pin=1, sda_pin=0):
-        i2c = I2C(0, scl=Pin(scl_pin), sda=Pin(sda_pin))
-        self.oled = SSD1306_I2C(width, height, i2c)
-
+    def __init__(self, width=128, height=64, scl_pin=1, sda_pin=0, use_mock=False):
+        # use_mockがTrue、またはライブラリがない、またはI2C接続に失敗した場合にMockを使う
+        self.oled = None
+        
+        if not use_mock and SSD1306_I2C is not None:
+            try:
+                i2c = I2C(0, scl=Pin(scl_pin), sda=Pin(sda_pin))
+                # 接続確認（スキャン）をしてデバイスがいなければエラーになる
+                if not i2c.scan():
+                    raise OSError("No I2C device found")
+                self.oled = SSD1306_I2C(width, height, i2c)
+            except Exception as e:
+                print(f"Warning: Display init failed ({e}). Using Mock.")
+                self.oled = MockSSD1306(width, height)
+        else:
+            self.oled = MockSSD1306(width, height)
+        
     def show_interval_mode(self, active_ch, next_triggers, configs, current_time_ms):
         self.oled.fill(0)
         self.oled.text("Mode: interval", 0, 0)

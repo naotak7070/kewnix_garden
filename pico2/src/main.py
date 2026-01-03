@@ -9,7 +9,7 @@ def main():
     buttonB = ButtonGpio(pin_number=21)
 
     # ディスプレイ
-    display = DisplayManager()
+    display = DisplayManager(use_mock=True)
 
     # ポンプ設定: pin, ON(ms), OFF(ms)
     min1 = 60 * 1000
