@@ -2,8 +2,18 @@ from logic.multipump_controller import MultiPumpController
 from display.display_manager import DisplayManager
 from hardware.button_gpio import ButtonGpio
 import time
+from hardware.wifi_connector import WiFiConnector
 
 def main():
+    # --- Wi-Fi接続テスト ---
+    try:
+        # SSIDとパスワードは自分の環境に合わせて書き換え
+        wifi = WiFiConnector("SSID", "password")
+        wifi.connect()
+
+    except RuntimeError as e:
+        print(f"Wi-Fi Connection Error: {e}")
+
     # ボタン設定
     buttonA = ButtonGpio(pin_number=20)
     buttonB = ButtonGpio(pin_number=21)
@@ -49,6 +59,6 @@ def main():
         lastB = currentB
 
         controller.update()
-        time.sleep_ms(100)
+        time.sleep_ms(3000) # 100に戻す
 
 main()
