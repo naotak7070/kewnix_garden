@@ -64,40 +64,104 @@ class DisplayManager:
         self.wifi_status_str = text
         
     def show_interval_mode(self, active_ch, next_triggers, configs, current_time_ms):
+        # === Mockモード (ターミナル表示) ===
+        if self.use_mock:
+            print("\n--- [MockDisp] Interval Mode ---")
+            
+            # 1. 稼働中のポンプを一番上に表示
+            if active_ch >= 0 and active_ch < len(configs):
+                pin = configs[active_ch][0]
+                print(f"> Pin {pin}: ON !!!")  # 強調表示
+            
+            # 2. 待機中のポンプをソートして表示
+            items = []
+            for i, (pin, high_ms, low_ms) in enumerate(configs):
+                if i == active_ch: continue
+                remaining = max(0, (next_triggers[i] - current_time_ms) // 1000)
+                items.append((remaining, pin))
+            
+            items.sort()
+            for remaining, pin in items[:5]: # 上位5件
+                print(f"  Pin {pin}: in {remaining}s")
+            print("-" * 30)
+            return
+
+        # === 実機モード (OLED描画) ===
         self.oled.fill(0)
-        # ★1行目: Wi-Fiステータス
-        self.oled.text(self.wifi_status_str, 0, 0)
-        # ★2行目: モード (y=10 にずらす)
-        self.oled.text("Mode: interval", 0, 10)
+        self.oled.text("Mode: interval", 0, 0)
+        
+        row = 0  # 表示行番号 (0~5)
 
+        # 1. 稼働中のポンプを一番上に表示
+        if active_ch >= 0 and active_ch < len(configs):
+            pin = configs[active_ch][0]
+            # 先頭に '>' をつけ、状態を 'ON' と表示
+            self.oled.text(f"> Pin {pin}: ON", 0, 10 + row * 10)
+            row += 1
+
+        # 2. 待機中のポンプリストを作成
         items = []
-
         for i, (pin, high_ms, low_ms) in enumerate(configs):
             if i == active_ch:
-                continue  # 現在ONのピンは除外
-            remaining = max(0, (next_triggers[i] - current_time_ms) // 1000)
+                continue  # 稼働中以外を集める
+            
+            diff = next_triggers[i] - current_time_ms
+            remaining = max(0, diff // 1000)
             items.append((remaining, pin))
 
-        # 時間が短い順に並び替え、上位5件のみ表示
+        # 時間が短い順に並び替え
         items.sort()
-        for i, (remaining, pin) in enumerate(items[:5]):
-            self.oled.text(f"Pin {pin}: in {remaining}s", 0, 20 + i * 10)
 
-        self.oled.show()    
-
-    def show_manual_mode(self, manual_state_list, configs):
-        self.oled.fill(0)
-        # ★1行目: Wi-Fiステータス
-        self.oled.text(self.wifi_status_str, 0, 0)
-        # ★2行目: モード (y=10 にずらす)
-        self.oled.text("Mode: manual", 0, 10)
-
-        for i, state in enumerate(manual_state_list[:5]):
-            pin = configs[i][0]  # ピン番号だけ取り出す
-            status = "ON" if state else "OFF"
-            self.oled.text(f"Pin {pin}: {status}", 0, 20 + i * 10)
+        # 3. 残りのスペースに待機中ポンプを表示
+        for remaining, pin in items:
+            if row >= 5: # 画面からはみ出るなら終了
+                break
+            # 待機中は先頭スペース
+            self.oled.text(f"  Pin {pin}: in {remaining}s", 0, 10 + row * 10)
+            row += 1
 
         self.oled.show()
+
+    def show_manual_mode(self, manual_state_list, configs, focused_index=0):
+        # 共通ロジック: 1画面に表示できる行数とページ計算
+        ITEMS_PER_PAGE = 5
+        start_index = (focused_index // ITEMS_PER_PAGE) * ITEMS_PER_PAGE
+        display_items = configs[start_index : start_index + ITEMS_PER_PAGE]
+
+        # === Mockモード (ターミナル表示) ===
+        if self.use_mock:
+            print(f"\n--- [MockDisp] Manual Mode (Page {start_index // ITEMS_PER_PAGE + 1}) ---")
+            for i, (pin, _, _) in enumerate(display_items):
+                real_index = start_index + i
+                if real_index >= len(manual_state_list):
+                    break
+
+                state = manual_state_list[real_index]
+                status = "ON" if state else "OFF"
+                
+                # カーソル表示 (> Pin 6: ON)
+                cursor = ">" if real_index == focused_index else " "
+                print(f"{cursor} Pin {pin}: {status}")
+            print("-" * 30)
+            return
+
+        # === 実機モード (OLED描画) ===
+        self.oled.fill(0)
+        self.oled.text("Mode: manual", 0, 0)
+
+        for i, (pin, _, _) in enumerate(display_items):
+            real_index = start_index + i
+            if real_index >= len(manual_state_list):
+                break
+
+            state = manual_state_list[real_index]
+            status = "ON" if state else "OFF"
+            
+            cursor = ">" if real_index == focused_index else " "
+            self.oled.text(f"{cursor}Pin {pin}: {status}", 0, 10 + i * 10)
+
+        self.oled.show()
+    
 
     # -----------------------------------------------------------
     # Main/Webから呼ばれるラッパーメソッド

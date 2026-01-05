@@ -1,4 +1,4 @@
-# hardware/button_gipo.py
+# hardware/button_gpio.py
 from machine import Pin
 from interfaces.button_interface import ButtonInterface
 
@@ -10,4 +10,4 @@ class ButtonGpio(ButtonInterface):
         return self.pin.value()
 
     def is_pressed(self) -> bool:
-            return self.pin.value() == 0
+        return self.pin.value() == 0
