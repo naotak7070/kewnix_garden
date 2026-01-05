@@ -3,3 +3,6 @@ venv/
 typings/
 *.pyc
 *.bak
+pico2_uf2/
+config.json
+.DS_Store
