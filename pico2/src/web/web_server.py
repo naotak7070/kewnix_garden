@@ -111,52 +111,103 @@ def save_wifi(request):
     return "Error: Missing Data", 400
 
 # ==========================================
-# ポンプ設定 
+# ポンプ設定 (★計算機能付きに強化)
 # ==========================================
 @app.route('/pumps')
 def pump_settings(request):
     pumps = config.get_pumps()
     
-    # ---------------------------------------------
-    # 1. プリセットデータの準備 (Python -> HTML/JS)
-    # ---------------------------------------------
-    # JSで扱いやすい辞書形式に変換 { 'id': {on: 5, off: 15}, ... }
+    # プリセット辞書作成
     preset_dict = {p['id']: {'on': p['on_sec'], 'off': p['off_min']} for p in GARDEN_PRESETS}
-    # JSON文字列化
     preset_json = json.dumps(preset_dict)
     
-    # プルダウンの選択肢HTMLを作成
+    # プルダウンのHTML作成
     options_html = '<option value="">-- Apply Preset --</option>'
     for p in GARDEN_PRESETS:
         options_html += f'<option value="{p["id"]}">{p["name"]}</option>'
 
     # ---------------------------------------------
-    # 2. ページ構築
+    # ページ構築
     # ---------------------------------------------
     html = HTML_HEADER + "<h1>Pump Settings</h1>"
     
-    # ★JavaScript注入: 選択されたらinput値を書き換える
+    # ★追加スタイル
+    html += """
+    <style>
+        .flow-info {
+            margin-top: 10px;
+            padding: 8px;
+            background-color: #e9ecef;
+            border-radius: 4px;
+            font-size: 0.9em;
+            color: #495057;
+        }
+        .flow-val { font-weight: bold; color: #007bff; }
+    </style>
+    """
+
+    # ★JavaScript (計算ロジック追加)
     html += f"""
     <script>
-        // Pythonから渡されたプリセットデータ
         const PRESETS = {preset_json};
+        const FLOW_RATE = 2.2; // ml per second
         
+        // ページ読み込み完了時に全ポンプの計算を実行
+        window.onload = function() {{
+            // 0番から7番(最大8個)まで計算を試みる
+            for(let i=0; i<8; i++) {{
+                calculateFlow(i);
+            }}
+        }};
+
+        // プリセット適用
         function applyPreset(selectElement, index) {{
             const selectedId = selectElement.value;
-            if (!selectedId) return; // 未選択なら何もしない
+            if (!selectedId) return; 
             
             const data = PRESETS[selectedId];
             if (data) {{
-                // 対応する入力フォームを探す
                 const inputHigh = document.querySelector('input[name="high_' + index + '"]');
                 const inputLow = document.querySelector('input[name="low_' + index + '"]');
                 
-                // 値を自動入力
                 if(inputHigh) inputHigh.value = data.on;
                 if(inputLow) inputLow.value = data.off;
                 
-                // ユーザーにフィードバック (一瞬背景色を変えるなどしても良いが今回はシンプルに)
+                // ★値が変わったので再計算
+                calculateFlow(index);
             }}
+        }}
+        
+        // ★灌水量計算ロジック
+        function calculateFlow(index) {{
+            const inputHigh = document.querySelector('input[name="high_' + index + '"]');
+            const inputLow = document.querySelector('input[name="low_' + index + '"]');
+            const infoArea = document.getElementById('flow_info_' + index);
+            
+            if(!inputHigh || !inputLow || !infoArea) return;
+            
+            const onSec = parseFloat(inputHigh.value);
+            const offMin = parseFloat(inputLow.value);
+            
+            if(isNaN(onSec) || isNaN(offMin) || onSec <= 0 || offMin <= 0) {{
+                infoArea.innerHTML = "-";
+                return;
+            }}
+            
+            // 1. 一回の量 (ml)
+            const oneTimeVol = onSec * FLOW_RATE;
+            
+            // 2. 一日の量 (ml)
+            // サイクル時間(秒) = ON時間 + OFF時間(秒)
+            const cycleSec = onSec + (offMin * 60);
+            // 1日の回数 = 86400秒 / サイクル
+            const dailyCounts = 86400 / cycleSec;
+            const dailyVol = oneTimeVol * dailyCounts;
+            
+            // 表示更新 (小数第1位まで)
+            infoArea.innerHTML = 
+                '1 time: <span class="flow-val">' + oneTimeVol.toFixed(1) + ' ml</span> / ' +
+                '1 day: <span class="flow-val">' + Math.round(dailyVol) + ' ml</span> (' + Math.round(dailyCounts) + ' times)';
         }}
     </script>
     """
@@ -166,9 +217,8 @@ def pump_settings(request):
     for i, p in enumerate(pumps):
         pin = p['pin']
         enabled = p.get('enabled', True)
-        high_sec = int(p['high_ms'] / 1000)      # ms -> 秒
-        low_min = int(p['low_ms'] / 1000 / 60)   # ms -> 分
-        
+        high_sec = int(p['high_ms'] / 1000)
+        low_min = int(p['low_ms'] / 1000 / 60)
         checked = "checked" if enabled else ""
         
         # カード生成
@@ -186,12 +236,17 @@ def pump_settings(request):
             
             <div class="form-group">
                 <label>ON (sec):</label>
-                <input type="number" name="high_{i}" value="{high_sec}" min="1">
+                <input type="number" name="high_{i}" value="{high_sec}" min="1" oninput="calculateFlow({i})">
             </div>
             <div class="form-group">
                 <label>OFF (min):</label>
-                <input type="number" name="low_{i}" value="{low_min}" min="1">
+                <input type="number" name="low_{i}" value="{low_min}" min="1" oninput="calculateFlow({i})">
             </div>
+            
+            <div id="flow_info_{i}" class="flow-info">
+                Calculating...
+            </div>
+            
             <input type="hidden" name="pin_{i}" value="{pin}">
         </div>
         """
@@ -204,7 +259,6 @@ def pump_settings(request):
     """ + HTML_FOOTER
     
     return html, 200, {'Content-Type': 'text/html'}
-
 @app.route('/pumps/save', methods=['POST'])
 def save_pumps(request):
     # 現在の設定を取得（ベースにする）
