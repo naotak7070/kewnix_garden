@@ -1,10 +1,12 @@
 from microdot import Microdot
 from lib.config_manager import ConfigManager
 from hardware.wifi_connector import WiFiConnector
+from lib.presets import GARDEN_PRESETS
 import machine
 from machine import Timer
 import _thread
 import time
+import json
 
 app = Microdot()
 config = ConfigManager()
@@ -46,6 +48,9 @@ HTML_HEADER = """
         .btn-green { background-color: #28a745; }
         .btn-gray { background-color: #6c757d; }
         .btn:hover { opacity: 0.9; }
+        
+        /* ★追加: プルダウン用スタイル */
+        .preset-select { padding: 5px; border-radius: 4px; border: 1px solid #ccc; font-size: 14px; width: 100%; max-width: 180px; }
     </style>
 </head>
 <body><div class="container">
@@ -106,13 +111,57 @@ def save_wifi(request):
     return "Error: Missing Data", 400
 
 # ==========================================
-# ポンプ設定
+# ポンプ設定 
 # ==========================================
 @app.route('/pumps')
 def pump_settings(request):
     pumps = config.get_pumps()
     
-    html = HTML_HEADER + "<h1>Pump Settings</h1><form action='/pumps/save' method='post'>"
+    # ---------------------------------------------
+    # 1. プリセットデータの準備 (Python -> HTML/JS)
+    # ---------------------------------------------
+    # JSで扱いやすい辞書形式に変換 { 'id': {on: 5, off: 15}, ... }
+    preset_dict = {p['id']: {'on': p['on_sec'], 'off': p['off_min']} for p in GARDEN_PRESETS}
+    # JSON文字列化
+    preset_json = json.dumps(preset_dict)
+    
+    # プルダウンの選択肢HTMLを作成
+    options_html = '<option value="">-- Apply Preset --</option>'
+    for p in GARDEN_PRESETS:
+        options_html += f'<option value="{p["id"]}">{p["name"]}</option>'
+
+    # ---------------------------------------------
+    # 2. ページ構築
+    # ---------------------------------------------
+    html = HTML_HEADER + "<h1>Pump Settings</h1>"
+    
+    # ★JavaScript注入: 選択されたらinput値を書き換える
+    html += f"""
+    <script>
+        // Pythonから渡されたプリセットデータ
+        const PRESETS = {preset_json};
+        
+        function applyPreset(selectElement, index) {{
+            const selectedId = selectElement.value;
+            if (!selectedId) return; // 未選択なら何もしない
+            
+            const data = PRESETS[selectedId];
+            if (data) {{
+                // 対応する入力フォームを探す
+                const inputHigh = document.querySelector('input[name="high_' + index + '"]');
+                const inputLow = document.querySelector('input[name="low_' + index + '"]');
+                
+                // 値を自動入力
+                if(inputHigh) inputHigh.value = data.on;
+                if(inputLow) inputLow.value = data.off;
+                
+                // ユーザーにフィードバック (一瞬背景色を変えるなどしても良いが今回はシンプルに)
+            }}
+        }}
+    </script>
+    """
+    
+    html += "<form action='/pumps/save' method='post'>"
     
     for i, p in enumerate(pumps):
         pin = p['pin']
@@ -122,13 +171,19 @@ def pump_settings(request):
         
         checked = "checked" if enabled else ""
         
-        # 各ポンプのカードを生成
+        # カード生成
         html += f"""
         <div class="pump-card">
-            <div class="form-group">
-                <input type="checkbox" name="enabled_{i}" value="1" {checked}>
-                <strong>Pin {pin}</strong>
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                <div class="form-group" style="margin-bottom:0;">
+                    <input type="checkbox" name="enabled_{i}" value="1" {checked}>
+                    <strong>Pin {pin}</strong>
+                </div>
+                <select class="preset-select" onchange="applyPreset(this, {i})">
+                    {options_html}
+                </select>
             </div>
+            
             <div class="form-group">
                 <label>ON (sec):</label>
                 <input type="number" name="high_{i}" value="{high_sec}" min="1">
