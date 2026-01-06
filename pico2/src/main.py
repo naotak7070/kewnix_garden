@@ -8,7 +8,8 @@ from web.web_server import start_web_server, set_display
 import time
 import _thread
 import sys
-import machine # 追加
+import machine
+import network
 
 def main():
     print("--- Kewnix Garden Booting ---")
@@ -30,11 +31,18 @@ def main():
     buttonA = ButtonGpio(pin_number=20)
     buttonB = ButtonGpio(pin_number=21)
     
-    # 修正: ボタン初期値を0に固定（起動時の誤反応防止）
+    # ボタン初期値を0に固定（起動時の誤反応防止）
     lastA = 0
     lastB = 0
+    # Aボタン長押し判定用の変数を初期化
+    btnA_press_start = 0
+    ignore_next_release = False
+    # Bボタン用変数とWi-Fi状態フラグ
+    btnB_press_start = 0
+    ignore_next_release_B = False
+    is_wifi_on = True  # 起動時はONスタート
 
-    display = DisplayManager(use_mock=True) # 必要ならFalseへ
+    display = DisplayManager(use_mock=False) # 必要ならFalseへ
     controller = MultiPumpController(pump_configs, display)
     controller.begin()
 
@@ -114,7 +122,7 @@ def main():
                 time.sleep(5) # エラー表示を見る時間
                 # リブートせず、APモードのまま再試行を待つ
 
-        # 2. リブート要求処理 (★新規追加: Webボタンからの要求)
+        # 2. リブート要求処理 (Webボタンからの要求)
         if web.web_server.reboot_request:
             web.web_server.reboot_request = False # フラグ回収
             
@@ -131,18 +139,127 @@ def main():
         currentA = buttonA.read()
         currentB = buttonB.read()
 
-        if lastA == 1 and currentA == 0:
-            controller.switch_mode("interval")
+        # === Aボタン処理 (長押し: IP表示 / 短押し: モード切替) ===
+        if currentA == 1:
+            if lastA == 0:
+                # 押し始めの時刻を記録
+                btnA_press_start = time.ticks_ms()
+            
+            # 押されている間の時間をチェック
+            if time.ticks_diff(time.ticks_ms(), btnA_press_start) > 2000:
+                # 2秒以上経過 -> 情報表示
+                print("Show Network Info")
+                display.fill(0)
+                display.text("--- NETWORK ---", 0, 0)
+                
+                # ★Wi-Fiの状態によって表示を分岐
+                if is_wifi_on:
+                    # ONの場合：詳細を表示
+                    mode_str = "Unknown"
+                    if wifi_conf and isinstance(wifi_conf, dict):
+                        mode_str = wifi_conf.get("mode", "AP")
+                    display.text(f"Mode: {mode_str}", 0, 20)
+                    
+                    ip_str = ip_address if ip_address else "No IP"
+                    display.text(str(ip_str), 0, 40)
+                else:
+                    # OFFの場合：ONにする方法を案内
+                    display.text("Status: OFF", 0, 20)
+                    display.text("(Hold B to ON)", 0, 40)
+                
+                display.show()
+                time.sleep(3)
+                
+                controller.last_display_refresh = 0
+                ignore_next_release = True
+                btnA_press_start = time.ticks_ms() + 10000
+            
 
-        if lastB == 1 and currentB == 0:
-            if controller.mode != "manual":
-                controller.switch_mode("manual")
-            controller.handle_manual()
+        elif lastA == 1: 
+            # ボタンを離した瞬間 (currentA == 0)
+            if not ignore_next_release:
+                # 長押し処理が行われていなければ、通常のモード切替を実行
+                controller.switch_mode("interval")
+            
+            # フラグをリセット
+            ignore_next_release = False
+        # ========================================================
+
+        # === Bボタン処理 (長押し: IP表示 / 短押し: モード切替) ===
+        if currentB == 1:
+            if lastB == 0:
+                btnB_press_start = time.ticks_ms()
+            
+            # 長押し判定 (2秒)
+            if time.ticks_diff(time.ticks_ms(), btnB_press_start) > 2000:
+                print("Toggle Wi-Fi Power")
+                display.fill(0)
+                
+                if is_wifi_on:
+                    # --- Wi-Fi を OFF にする処理 ---
+                    display.text("Stopping Wi-Fi...", 0, 0)
+                    display.show()
+                    
+                    # STAとAPの両方を無効化してチップを停止
+                    network.WLAN(network.STA_IF).active(False)
+                    network.WLAN(network.AP_IF).active(False)
+                    
+                    is_wifi_on = False
+                    ip_address = None
+                    
+                    display.fill(0)
+                    display.text("Wi-Fi: OFF", 0, 20)
+                    display.text("(Power Saving)", 0, 40)
+                    display.show()
+                    
+                else:
+                    # --- Wi-Fi を ON にする処理 ---
+                    display.text("Starting Wi-Fi...", 0, 0)
+                    display.show()
+                    
+                    # 1. 接続を試行 (起動時と同じロジック)
+                    if wifi_conf["mode"] == "STA" and wifi_conf["ssid"]:
+                        display.text(f"Conn: {wifi_conf['ssid']}", 0, 20)
+                        display.show()
+                        # 再接続のため新しいインスタンスで試行
+                        tmp_wifi = WiFiConnector() 
+                        ip_address = tmp_wifi.connect(wifi_conf["ssid"], wifi_conf["password"])
+                    
+                    # 2. 失敗または未設定ならAPモード
+                    if not ip_address:
+                        display.fill(0)
+                        display.text("Starting AP...", 0, 0)
+                        display.show()
+                        tmp_wifi = WiFiConnector()
+                        ip_address = tmp_wifi.start_ap_mode(ap_ssid="Kewnix-Setup", ap_password="password123")
+                    
+                    is_wifi_on = True
+                    display.fill(0)
+                    display.text("Wi-Fi: ON", 0, 0)
+                    display.text(str(ip_address), 0, 20)
+                    display.show()
+
+                time.sleep(3)
+                controller.last_display_refresh = 0
+                ignore_next_release_B = True
+                btnB_press_start = time.ticks_ms() + 10000
+
+        elif lastB == 1:
+            # ボタンを離した瞬間
+            if not ignore_next_release_B:
+                # 長押ししていなければ、元の機能（ポンプ操作）を実行
+                if controller.mode != "manual":
+                    controller.switch_mode("manual")
+                controller.handle_manual()
+            
+            ignore_next_release_B = False
+        # ========================================================
 
         lastA = currentA
         lastB = currentB
 
         controller.update()
+
         time.sleep_ms(100)
 
 if __name__ == "__main__":
