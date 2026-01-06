@@ -12,7 +12,14 @@ import machine
 import network
 
 def main():
+    # =====================================================
+    # 1. 最優先でディスプレイを初期化してロゴを表示
+    # =====================================================
     print("--- Kewnix Garden Booting ---")
+    
+    display = DisplayManager(use_mock=False) 
+    display.show_splash() # ロゴ表示
+  
 
     # 安全停止
     print("!!! Press Ctrl+C within 3 seconds to STOP !!!")
@@ -42,16 +49,17 @@ def main():
     ignore_next_release_B = False
     is_wifi_on = True  # 起動時はONスタート
 
-    display = DisplayManager(use_mock=False) # 必要ならFalseへ
+
     controller = MultiPumpController(pump_configs, display)
-    controller.begin()
 
     set_display(display)
     
     # Wi-Fi接続
     wifi = WiFiConnector()
     ip_address = None
-    display.set_wifi_ap_mode()
+    display.set_wifi_connecting()
+    print("Attempting to connect...")
+
 
     if wifi_conf["mode"] == "STA" and wifi_conf["ssid"]:
         print(f"Connecting to {wifi_conf['ssid']}...")
@@ -77,6 +85,9 @@ def main():
         _thread.start_new_thread(start_web_server, ())
     except Exception as e:
         print(f"Failed to start server: {e}")
+    
+    print("Starting Pump Controller...")
+    controller.begin()
 
     # ==========================================
     # メインループ
